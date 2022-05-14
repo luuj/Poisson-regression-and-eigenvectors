@@ -1,0 +1,254 @@
+---
+title: "Data Structures Exam #32"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, fig.width = 12, fig.height = 8)
+library(RSpectra)
+library(locStra)
+library(Matrix)
+set.seed(127)
+load("C:\\Users\\Jonathan\\OneDrive - Harvard University\\Qualifying Exam\\1000genomes_chr1.Rdata")
+```
+
+# Problem 3 - Part A
+
+The runtime for a naive computation of the first k eigenvectors of a square matrix is $O(kn^2)$. Assuming that we use the standard technique of rank-revealing QR factorization of the matrix and then manipulating the factors to obtain the decomposition, we can see that a majority of the computation is matrix multiplication. However, since we require only the first k rather than all n eigenvectors (naive matrix multiplication typically takes $O(n^3)$ time for a square matrix since the dot product takes O(n) time and we have to do it $n^2$ times), the time is reduced down to $O(kn^2)$.
+
+# Part B
+
+First, I will show that the columns of V are eigenvectors of $A^TA$.
+
+$$
+\begin{aligned}
+A^TA&=(U\Sigma V^T)^T(U\Sigma V^T)\\
+&=V \Sigma^T U^T U \Sigma V^T
+\end{aligned}
+$$
+
+Since both U and V are orthonormal, $U^TU=I$ and $V^TV=I$. Furthermore $A^TA$ must also be symmetric and positive semi-definite by definition. Therefore, we get
+
+$$
+\begin{aligned}
+V \Sigma^T U^T U \Sigma V^T &= V\Sigma^T\Sigma V^T\\
+\Rightarrow A^TAV &=V\Sigma^T\Sigma
+\end{aligned}
+$$
+
+Therefore, the columns of v must be the eigenvectors of $A^TA$ by definition and $\Sigma^T \Sigma$ must be the eigenvalues of $A^TA$, as each $\sigma^2$ is $\lambda(A^TA)$.
+
+To see that the columns of U are eigenvectors of $AA^T$, first note that $u_i=\frac{Av_i}{\sigma_i}$. Then consider
+
+$$
+\begin{aligned}
+AA^Tu_i &= AA^T\frac{Av_i}{\sigma_i}\\
+&=AA^TAv_i \frac{1}{\sigma_i}
+\end{aligned}
+$$
+
+Since v is an eigenvector of $A^TA$ from above, we get
+
+$$
+\begin{aligned}
+AA^TAv_i \frac{1}{\sigma_i} &= A(\sigma_i)^2 v_i \frac{1}{\sigma_i}\\
+&=(\sigma_i)^2 \frac{Av_i}{\sigma_i}\\
+&=(\sigma_i)^2 u_i
+\end{aligned}
+$$
+
+Therefore, the columns of U must be the eigenvectors of $AA^T$.
+
+From above, we can see that by computing the SVD decomposition of A, the fast randomized SVD algorithm (or any algorithm that calculates the SVD) also computes the eigenvectors of $AA^T$.
+
+# Part C
+
+```{r}
+sMatrix <- function(X,minVariants=0) {
+	numAlleles <- 2*ncol(X)
+	sumVariants <- rowSums(X)
+	
+	# Check if any of the row_sums are larger than the number of columns.
+	invertMinorAllele <- sumVariants>(numAlleles/2)
+	X[invertMinorAllele,] <- 2 - X[invertMinorAllele,]
+	
+	# Remove rows whose row_sum < minVariant
+	sumVariants <- rowSums(X)
+	X <- X[sumVariants>=minVariants,]
+	
+	# Re-calculate the row_sums
+	sumFilteredVariants <- rowSums(X)
+	
+	## Calculate the weight matrix, w_k
+	# Calculate (2n) choose 2
+	totalPossiblePairs <- numAlleles*(numAlleles-1)/2
+	
+	# Calculate sum of G_lk choose 2
+	totalPairs <- sumFilteredVariants*(sumFilteredVariants-1)/2
+	weights <- ifelse(totalPairs>0,totalPossiblePairs/totalPairs,0)
+	
+	# Start calculating the s_ij matrix
+	# Matrix multiplication - O(n^3)
+	s_matrix_numerator <- as.matrix(t(X * weights) %*% X)
+	return(s_matrix_numerator/(4*nrow(X)))
+}
+```
+
+Looking at the code for sMatrix, we can see that on the second to last line, the final result of the entire function is proportional to s_matrix_numerator. This matrix is explicitly written as $X^TX$. Multiplying $X^TX$ by a weight or dividing it by 4*nrow(X) does not change its form. Therefore, the s-matrix can indeed be written in the form $X^TX$, and thus the randomized SVD algorithm applies.
+
+\newpage
+# Part D
+
+Assumption: Test matrix is Gaussian
+
+```{r}
+## Parameters 
+# A: input matrix A
+# k: first k eigenvectors to be calculated
+# q: exponent q
+# print: Print matrix sizes or not
+# Output: first k eigenvectors of AA^T
+rsvd <- function(A, k=2, q=5, print=FALSE){
+   # Generate nx2k Gaussian test matrix
+   n <- ncol(A)
+   testM <- matrix(rnorm(n*2*k), nrow=n)
+
+   # Form Y matrix
+   Y <- A%*%testM
+   for (i in 1:q){
+      Y <- A%*%t(A)%*%Y
+   }
+
+   # Construct matrix Q whose columns form an orthonormal basis
+   Q <- qr.Q(qr(Y))
+
+   # Form B matrix
+   B <- t(Q)%*%A
+
+   # Compute truncated SVD of B
+   u_tilde <- svds(B,k)$u
+
+   # Compute final U matrix
+   U <- Q%*%u_tilde
+
+   if (print){
+      print(paste0("Test matrix dimension: ", nrow(testM), "x", ncol(testM)))
+      print(paste0("Y matrix dimension: ", nrow(Y), "x", ncol(Y)))
+      print(paste0("Q matrix dimension: ", nrow(Q), "x", ncol(Q)))
+      print(paste0("B matrix dimension: ", nrow(B), "x", ncol(B)))
+      print(paste0("U_tilde matrix dimension: ", nrow(u_tilde), "x", ncol(u_tilde)))
+      print(paste0("U matrix dimension: ", nrow(U), "x", ncol(U)))
+   }
+
+   return(U)
+}
+```
+
+\newpage
+```{r}
+# Test out the function
+A <- matrix(c(13, -4, 2, -4, 11, -2, 2, -2, 8), 3, 3, byrow=TRUE)
+A
+rsvd(A,print=TRUE)
+
+# Compare against eigen function
+eigen(A%*%t(A))
+```
+
+From above, we can see that the rsvd function gives the exact same eigenvectors as the built in eigen function in R. One reason why this technique is advantageous is that it can improve the speed of SVD. SVD's computational complexity is mostly due to matrix multiplication, and randomized algorithms can reorganize this matrix multiplication for maximum efficiency in a variety of computational architectures. Although the example above (3x3) matrix is not a great example, when applied to the geno sized matrices, we are reducing these very large matrix multiplications down to much smaller ones. Typically, SVD takes around O($kmn$) flops using a standard approach. However, randomized methods can produce an approximate SVD using O($mn\log(k) + (m+n)k^2$) flops since the random test matrix allows us to evaluate the product $A\Omega$ very quickly. Furthermore, this particular randomized SVD only requires 2(q+1) passes over the matrix, so it can be efficient even if the matrix is too large to be stored. 
+
+\newpage
+# Part E
+
+Assumption: k=2
+
+```{r}
+# Create windows of size 10000
+windowSize <- 10000
+w <- makeWindows(nrow(geno), windowSize, windowSize)
+
+# Comparison function
+cor2 <- function(x,y) ifelse(sum(x)==0 | sum(y)==0, 0, cor(x,y))
+
+# sMatrix function to pass in X into rsvd function
+sMatrix_New <- function(X,minVariants=0) {
+	numAlleles <- 2*ncol(X)
+	sumVariants <- rowSums(X)
+	
+	# Check if any of the row_sums are larger than the number of columns.
+	invertMinorAllele <- sumVariants>(numAlleles/2)
+	X[invertMinorAllele,] <- 2 - X[invertMinorAllele,]
+
+	# Remove rows whose row_sum < minVariant
+	sumVariants <- rowSums(X)
+	X <- X[sumVariants>=minVariants,]
+
+	# Re-calculate the row_sums
+	sumFilteredVariants <- rowSums(X)
+	
+	## Calculate the weight matrix, w_k
+	# Calculate (2n) choose 2
+	totalPossiblePairs <- numAlleles*(numAlleles-1)/2
+	
+	# Calculate sum of G_lk choose 2
+	totalPairs <- sumFilteredVariants*(sumFilteredVariants-1)/2
+	weights <- ifelse(totalPairs>0,totalPossiblePairs/totalPairs,0)
+	
+	# Calculate the weighted X and pass into rsvd function
+	X <- (X*sqrt(weights))/sqrt(4*nrow(X))
+	return(t(X))
+}
+
+# Fast randomized SVD
+resSMx <- fullscan(geno,w,sMatrix_New,rsvd,cor2)
+
+# Naive method
+resSMx.slow <- fullscan(geno,w,sMatrix,powerMethod,cor2)
+```
+
+```{r, echo=FALSE}
+xlabel <- "SNP position"
+ylabel <- "Correlation between global and local eigenvectors"
+mainlabel <- "fast EVs"
+matplot(w[,1],abs(resSMx[,1]),type="b",xlab=xlabel,ylab=ylabel,ylim=c(-1,1),main=mainlabel)
+
+mainlabel.slow <- "slow EVs"
+matplot(w[,1],abs(resSMx.slow[,1]),type="b",xlab=xlabel,ylab=ylabel,ylim=c(-1,1),main=mainlabel.slow)
+```
+
+\newpage
+# Part F
+
+```{r}
+# Calculate first two eigenvectors with rsvd
+rand.geno <- sMatrix_New(geno)
+rand.eigen <- rsvd(rand.geno)
+
+# Calculate first two eigenvectors with naive method
+slow.geno <- sMatrix(geno)
+slow.eigen <- eigen(slow.geno)$vectors[,1:2]
+```
+
+```{r, echo=FALSE}
+# Plot fast EVs
+xlabel <- "first eigenvector"
+ylabel <- "second eigenvector"
+mainlabel <- "fast EVs"
+plot(rand.eigen[,1],rand.eigen[,2],xlab=xlabel,ylab=ylabel,
+     ylim=c(-0.2,0.1),xlim=c(0,0.2),main=mainlabel,
+     col=c("red","blue","green","orange","purple")[factor(plabels)], pch=3)
+legend("bottomright",legend=levels(factor(plabels)), 
+       col=c("red","blue","green","orange","purple"), pch=3)
+
+# Plot slow EVs
+mainlabel <- "slow EVs"
+plot(slow.eigen[,1],-slow.eigen[,2],xlab=xlabel,ylab=ylabel,
+     ylim=c(-0.2,0.1),xlim=c(0,0.2),main=mainlabel, 
+     col=c("red","blue","green","orange","purple")[factor(plabels)], pch=3)
+legend("bottomright",legend=levels(factor(plabels)), 
+       col=c("red","blue","green","orange","purple"), pch=3)
+```
+
+
+
+

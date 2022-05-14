@@ -1,0 +1,355 @@
+---
+title: "Methods Exam #32"
+output: pdf_document
+header-includes:
+- \usepackage{amsmath}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, fig.width = 6, fig.height = 4)
+set.seed(123)
+library(KernSmooth)
+library(car)
+library(lmtest)
+library(fastDummies)
+
+mydata <- read.csv("C:\\Users\\Jonathan\\OneDrive - Harvard University\\Qualifying Exam\\Stein_et_al_data.csv")
+mydata$province_id <- factor(mydata$province_id, labels = c("North Sumatra",
+      "West Sumatra", "South Sumatra", "Lampung", "Jakarta", "West Java",
+      "Central Java", "Yogyakarta", "East Java", "Bali", "West Nusa Tenggara",
+      "South Kalimantan", "South Sulawesi"))
+mydata$facility_type <- relevel(factor(mydata$facility_type), "public")
+```
+
+# Problem 1 - Part A
+
+### Fitting the three models
+```{r}
+## Linear regression models
+# Model 1 
+m1 <- lm(diabetes_vig_score_prop ~ provider_cadre + year, data=mydata)
+coef(m1)
+
+# Model 2
+m2 <- lm(diabetes_vig_score_prop ~ provider_cadre + year +
+            province_id + urban, data=mydata)
+coef(m2)
+
+# Model 3
+m3 <- lm(diabetes_vig_score_prop ~ provider_cadre + year + 
+            province_id + urban + experience_yrs + training_ncd +
+            training_diabetes + training_drugs + facility_type, data=mydata)
+summary(m3)
+```
+
+The coefficients for all three models match up with the coefficients in the supplementary appendix. 
+
+\newpage
+## Part A.i
+
+### Testing Normality
+
+```{r, echo=FALSE}
+### Diagnostics for model 3 
+# Obtain residuals of model 3
+m3.resid <- residuals(m3)
+
+## Normality tests
+# QQplot
+qqnorm(m3.resid, frame=FALSE, main = "Residual QQ Plot")
+qqline(m3.resid, lwd=2)
+
+# Histogram
+hist(m3.resid, main = "Residual Histogram")
+
+# Boxplot
+boxplot(m3.resid, main = "Residual Boxplot")
+
+# Smoothed density plot
+m3.resid.smooth <- bkde(m3.resid)
+plot(m3.resid.smooth, type="l", main="Residual Smoothed Density Plot", 
+     xlab = "Residuals", ylab="Density")
+ord <- order(m3.resid)
+lines(m3.resid[ord], dnorm(m3.resid, sd=var(m3.resid)^.5)[ord],lty=2)
+```
+
+Looking at all four of these plots, it seems that the normality assumption is violated. The histogram is right skewed, and the QQplot and boxplot indicate that there are a large number of extreme values on the right tail. Lastly, the smoothed density plot helps visualize the extent to which our observed distribution of residuals differs from the expected normal distribution, and the two plots do not line up.
+
+### Testing homoscedasticity
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+m3.fit <- m3$fitted.values
+plot(m3.fit, m3.resid, xlab = "Fitted Values", ylab="Residuals", main="Residual vs. Fitted Scatterplot")
+l.fit <- loess(m3.resid ~ m3.fit)
+lines(x=m3.fit[order(m3.fit)],y=predict(l.fit)[order(m3.fit)], col="blue", lwd=3)
+```
+
+Looking at the fitted vs. residual plot, the homoscedastic assumption also does not hold as the residual variance slowly increases as the fitted value increases. If the data truly were homoscedastic, the residual variance would stay constant as the fitted value increased. However, the linearity assumption seems to hold looking at the smoothed lowess line. Nevertheless, two important assumptions (homoscedasticity and normality) are violated, making linear regression inference potentially invalid even with this large sample. 
+
+\newpage
+## Part A.ii
+One major reason why this cross-sectional design makes it difficult to test for trends in diabetes knowledge over time is that the cohort we are examining is different between the two times that we collect data. In this dataset, 2704 healthcare providers were sampled across both waves. However, only 432 health facilities that were sampled in 2007 were also sampled in 2014/2015. Differences in diabetes knowledge could stem from systematic differences in the providers who were part of these samples, as the measurements being taken are unique to each cohort. Furthermore, even if the providers were the same between the two samples, it is very likely that the person responding for the provider was different causing even more variation. This increase in variation caused by the repeated cross-sectional design lowers the power to detect significant differences. Because of all these issues inherent of a cross-sectional design, the authors had to account for many different changes such as provider cadre distributions, geographical distribution of providers, and provider characteristics to sufficiently analyze their data. Alternatively, a longitudinal analysis that focuses on the same individuals over time makes it possible to focus on changes occurring within subjects and to make inferences that are less sensitive to between-subject variation. Utilizing a cohort study or longitudinal design would have made it easier to test for trends over time and utilize longitudinal techniques such as generalized estimating equations and generalized linear mixed models. 
+
+## Part A.iii
+Assumption: In addition to the facilities being the same, the provider who was surveyed at each facility was also the same. Furthermore, since the provider/facility is now the same between time points, I will assume they are no longer independent.
+
+Since this now fits a longitudinal study design where each provider/facility is a cluster, I would use a GLMM to test diabetes knowledge change over time. I could use either a binomial/quasi-binomial family with logit link (for the proportion outcome) or Poisson family with log link (for the count outcome) for this model. I would use the same covariates as model 3 so we can adjust for the types of providers, locations, and provider experience. A random intercept would be included to characterize unobserved heterogeneity across facilities. Random slopes could potentially be included depending on the fit of the data. This model is appropriate because it accounts for both within-facility and across-facility variability which linear regression cannot do. Furthermore, as we saw from the residual plots, both normality and homoscedasticity assumptions were violated. GLMM is much more flexible as it allows for heteroscedasticity and non-normal errors. We also no longer have to worry about differing distributions of providers (changes in provider cadre providing diabetes care, geographical distribution of providers, and provider characteristics with respect to changes in diabetes care knowledge between the two survey waves) as the two samples are the same. Not only does this increase the potential power of detecting a significant difference, it makes the analysis much simpler as we do not need to conduct several sensitivity analyses to characterize the difference in populations. 
+
+\newpage
+# Part B
+
+## Part B.i
+
+### Poisson Model
+
+Let $Y_i$ be our count outcome, diabetes vignette score. I will assume that an offset is not needed because we are modeling counts rather than rates. Since $Y_i \sim \text{Poisson}(\lambda_i)$, our model is:
+
+$$
+\begin{aligned}
+\log(\lambda_i) &= \boldsymbol{X}^T_i \boldsymbol{\beta}\\
+\log(\lambda_i) &= \beta_0 + \beta_1\text{Midwife}_i + \beta_2\text{Nurse}_i + \beta_3\text{Paramedic}_i + \beta_4\text{Year}_i + \beta_5\text{West Sumatra}_i + \beta_6\text{South Sumatra}_i\\
+&\qquad \;\; + \beta_7\text{Lampung}_i + \beta_8\text{Jakarta}_i + \beta_9\text{West Java}_i + \beta_{10}\text{Central Java}_i +\beta_{11}\text{Yogyakarta}_i + \beta_{12}\text{East Java}_i\\
+&\qquad \;\; + \beta_{13}\text{Bali}_i + \beta_{14}\text{West Nusa Tenggara}_i + \beta_{15}\text{South Kalimantan}_i + \beta_{16}\text{South Sulawesi}_i\\
+&\qquad \;\; +\beta_{17} \text{Urban}_i + \beta_{18}\text{Experience}_i + \beta_{19}\text{NCD}_i+ \beta_{20}\text{Diabetes}_i + \beta_{21}\text{Drugs}_i + \beta_{22}\text{Private}_i
+\end{aligned}
+$$
+
+
+```{r}
+# Poisson Model 3
+poisson.m3 <- glm(diabetes_vig_score ~ provider_cadre + year + 
+            province_id + urban + experience_yrs + training_ncd +
+            training_diabetes + training_drugs + facility_type, data=mydata,
+            family=poisson(link="log"))
+summary(poisson.m3)
+```
+
+Looking at these results, the direction of the coefficients are the same as the linear model. Provider cadre coefficients are all negative compared to base (doctor cadre), there is still a decrease for the second wave (2014-2015) compared to the first wave (2007), being in an urban environment increases the score while experience slightly decreases it, postgraduate training overall increases the score, and private scores are lower than public. 
+
+The interpretations from the Poisson model differ from the linear model above because we are now modeling the log of the expected count as a function of the predictors. Therefore, our interpretation is as follows: for a one unit change in a covariate, the difference in the log of expected counts is expected to change by the respective regression coefficient, given the other predictor variables in the model are held constant. Compare this to the linear regression interpretation: for a one unit change in a covariate, the percentage mean difference of the outcome is expected to change by the respective regression coefficient, given the other predictor variables in the model are held constant. I would prefer the linear model (assuming that assumptions hold, as assumptions for both models are questionable for this dataset) because of the scientific question being asked. Since we know the total number of response items (n=38) and are interested in an overall increase or decrease in diabetes knowledge, I believe the interpretation of the linear model is more intuitive compared to the Poisson model. Furthermore, since this is cross-sectional data, we do not consider person-years to fully utilize the Poisson model and have to deal with the log-link transformation of our coefficients. Therefore, due to the simpler interpretation of linear regression and its direct connection to the scientific question of interest, I would prefer linear regression.
+
+\newpage
+## Part B.ii
+
+### Null and Alternative Hypothesis
+
+Since we are interested in the three provider cadre variables (Midwife, Nurse, and Paramedic) and whether any of these variables are non-zero, the formal hypotheses are:
+
+$H_0: \beta_1=\beta_2=\beta_3=0$
+
+$H_1: \beta_j \ne 0$ for at least one $j=1,2,3$
+
+### Derive a score test
+
+Suppose we partition $\boldsymbol{\beta}=(\boldsymbol{\beta_1,\beta_2})$, where $\boldsymbol{\beta_1}=\{\beta_1,\beta_2,\beta_3 \}$ consists of the coefficients we want to test, and $\boldsymbol{\beta_2}$ consists of the other coefficients that we are not interested in.
+
+Let $\boldsymbol{\hat{\beta}}_{0,MLE}=(\boldsymbol{0}_{3x1}, \boldsymbol{\hat{\beta}}_{2,MLE})$ denote the MLE under $H_0$, where $\boldsymbol{0}_{3x1}$ are the three 0 values for $\boldsymbol{\beta_1}$. Under the null, the score test is defined as 
+
+$$
+\boldsymbol{U(\hat{\beta}_{0,MLE}|y)}^TI(\boldsymbol{\hat{\beta}_{0,MLE} })^{-1}\boldsymbol{U(\hat{\beta}_{0,MLE}|y)} \stackrel{D}{\to} \chi^2_q
+$$
+
+where $\boldsymbol{U(\cdot)}$ is the score evaluated under $\boldsymbol{\hat{\beta}}_{0,MLE}$, $I(\cdot)$ is the fisher information matrix, and q=3 is the number of coefficients we are testing.
+
+Since we are using a Poisson distribution with pdf $\frac{\lambda^yexp(-\lambda)}{y!}=exp[ylog(\lambda)-\lambda-\log(y!)]$, we get
+
+$$
+\begin{aligned}
+\theta&=log(\lambda)\\
+b(\theta)&=\lambda=exp(\theta)\\
+\mu&=b'(\theta)=exp(\theta)=\lambda\\
+g(\mu)&=log(\mu)=\theta\\
+a(\phi)&=1
+\end{aligned}
+$$
+
+Therefore, log is the canonical link and we can utilize the simplified form of the score contribution for $\beta_j$ by the $i^{th}$ unit:
+
+$$
+\begin{aligned}\frac{\partial\ell(\boldsymbol{\beta},\phi;y_i)}{\partial\beta_j}&=\frac{X_{j,i}}{a_i(\phi)}(y_i-\mu_i)\\
+&=X_{j,i}(y_i-\lambda_i)\\
+\frac{\partial\ell(\boldsymbol{\hat{\beta}_{0,MLE}},\phi;y)}{\partial\beta_j}&=\sum_{i=1}^n X_{j,i}(y_i-\hat{\lambda_i})\\
+&=X^T(Y-\hat{\lambda})\\
+&=X^T(Y-exp(X^T\hat{\beta}_{0,MLE}))
+\end{aligned}
+$$
+where $\lambda_i$ is defined from the model in part B.i and can be calculated by running GLM on a reduced model that excludes provider cadre. Furthermore, the components of the sub-matrix of $\beta$ of the expected information matrix are the summation of $\frac{V(\mu_i)X_{j,i}X_{k,i}}{a_i(\phi)}=\lambda_iX_{j,i}X_{k,i}$, which gives the matrix form $X^T\text{diag}(\lambda)X=X^T\text{diag}(exp(X^T\hat{\beta}_{0,MLE}))X$.
+
+\newpage
+### Write a function to perform this score test by hand
+
+```{r}
+# Reduced model - does not include cadre variable
+reduced.model <- glm(diabetes_vig_score ~ year + 
+            province_id + urban + experience_yrs + training_ncd +
+            training_diabetes + training_drugs + facility_type, data=mydata,
+            family=poisson(link="log"))
+
+# MLE coefficients under the null
+reduced.beta <- matrix(c(rep(0,3),coef(reduced.model)))
+
+# Get appropriate X matrix
+score.data <- cbind(mydata[,c(3:5,7:13)], intercept=1)
+score.x <- dummy_cols(score.data,select_columns = c("year","facility_type",
+      "province_id", "provider_cadre"), remove_first_dummy = TRUE, 
+      remove_selected_columns = TRUE)
+
+# Redefine X, Y, and lambda for easier notation
+X <- as.matrix(score.x[,c(22:24,7,8,10:21,1,3,4:6,9)])
+Y <- as.matrix(score.data$diabetes_vig_score)
+lambda <- exp(X%*%reduced.beta)
+
+# Calculate the score statistic
+mat.score <- t(X)%*%(Y-lambda)
+var.score <- solve(t(X)%*%diag(c(lambda))%*%X)
+chi.stat <- t(mat.score)%*%var.score%*%mat.score
+chi.stat
+pchisq(chi.stat,df=3,lower.tail=FALSE)
+
+## Compare against LRT and Wald
+# Likelihood ratio test
+lrtest(reduced.model, poisson.m3)
+# Wald test
+c.matrix <- rbind(c(0,1,0,0,rep(0,19)),c(0,0,1,0,rep(0,19)),c(0,0,0,1,rep(0,19)))
+linearHypothesis(poisson.m3, c.matrix)
+```
+
+As the score test is asymptotically equivalent to the likelihood ratio test and Wald test, I chose to ran all three to compare their $\chi^2_3$ statistic values. The score test I implemented gave a $\chi^2$ value of 161.91, while the LR and Wald tests gave $\chi^2$ values of 163.48 and 161.74, respectively. Therefore, the inferences provided by all three of the tests are the same as they were all highly significant (p<0.001). We reject the null hypothesis that all provider cadre coefficients are the same in favor of at least one of the provider cadre coefficients not equaling 0. 
+
+\newpage
+## Part B.iii
+
+```{r}
+# Checking deviance
+poisson.m3$deviance/poisson.m3$df.residual
+
+# Checking sum of squared Pearson residuals
+squared.pearson<-residuals(poisson.m3,type="pearson")^2
+sum(squared.pearson)/poisson.m3$df.residual
+
+# Plot fitted values vs pearson residuals
+p.fitted <-poisson.m3$fitted.values
+plot(p.fitted, squared.pearson, ylim=c(0,10), xlab="Fitted values", 
+     ylab="Squared Pearson residuals",
+     main="Plot of Squared Pearson Residuals vs. Fitted Means")
+loess_fit <- loess(squared.pearson~p.fitted)
+lines(x=p.fitted[order(p.fitted)], y=predict(loess_fit)[order(p.fitted)],
+      col="blue",lwd=3)
+```
+
+Yes, there is evidence of overdispersion in the data. First, both the deviance and Pearson $\chi^2$ goodness-of-fit statistics are much larger than 1 (1.81 and 1.79, respectively), suggesting that there is a lack of fit for which we should consider overdispersion as a potential explanation. When plotting the squared Pearson residuals vs. the fitted means, we can see that the smoothed line is not constant, indicating that the assumed form of the variance is not doing well.
+
+\newpage
+# Part C
+
+## Part C.i
+
+### Write out the likelihood for the total diabetes vignette scores
+
+Assumption: The k care items are independent from one another
+
+Since the total diabetes vignette scores are sums of independent Bernoulli variables, $\sum_{k=1}^{38}W_{ijk} \sim \text{Binomial}(38,p_i)$. Therefore, the likelihood is:
+
+$$
+\begin{aligned}
+L(p_1,p_2|W)&=\prod_{i=1}^2 \prod_{j=1}^{N_i} p_i^{W_{ij}}(1-p_i)^{38-W_{ij}}\\
+&=\prod_{i=1}^2 p_i^{\sum_{j=1}^{N_i}W_{ij}}(1-p_i)^{38N_i-\sum_{j=1}^{N_i}W_{ij}}\\
+&=p_1^{\sum_{j=1}^{N_1}W_{1j}}(1-p_1)^{38N_1-\sum_{j=1}^{N_1}W_{1j}}p_2^{\sum_{j=1}^{N_2}W_{2j}}(1-p_2)^{38N_2-\sum_{j=1}^{N_2}W_{2j}}\\
+\ell(p_1,p_2|W)&=\sum_{j=1}^{N_1}W_{1j}log(p_1) + \left[38N_1-\sum_{j=1}^{N_1}W_{1j}\right]log(1-p_1) + \\
+&\quad \sum_{j=1}^{N_2}W_{2j}log(p_2) + \left[38N_2-\sum_{j=1}^{N_2}W_{2j}\right]log(1-p_2)
+\end{aligned}
+$$
+
+### Find the MLE for p1 and p2
+
+$$
+\begin{aligned}
+\frac{\partial \ell(p_1,p_2|W)}{\partial p_1} &= \frac{\sum_{j=1}^{N_1}W_{1j}}{p_1} - \frac{38N_1-\sum_{j=1}^{N_1}W_{1j}}{1-p_1} \stackrel{\text{set}}{=}0\\
+&\Rightarrow \sum_{j=1}^{N_1}W_{1j}-\sum_{j=1}^{N_1}W_{1j}p_1 = 38N_1p_1 - \sum_{j=1}^{N_1}W_{1j}p_1\\
+\hat{p_1}&=\frac{\sum_{j=1}^{N_1}W_{1j}}{38N_1}\\
+\hat{p_2}&=\frac{\sum_{j=1}^{N_2}W_{2j}}{38N_2}
+\end{aligned}
+$$
+
+Since $\hat{p_1}$ and $\hat{p_2}$ are the same calculation, the calculation for the MLE of $\hat{p_2}$ was omitted.
+
+Checking if the second derivative < 0:
+
+$$
+\begin{aligned}
+\frac{\partial^2 \ell(p_1,p_2|W)}{\partial p_1^2} &= \frac{\partial}{\partial p_1} \left[ \frac{\sum_{j=1}^{N_1}W_{1j}}{p_1} - \frac{38N_1-\sum_{j=1}^{N_1}W_{1j}}{1-p_1} \right]\\
+&=-\frac{\sum_{j=1}^{N_1}W_{1j}}{p_1^2} - \frac{38N_1-\sum_{j=1}^{N_1}W_{1j}}{(1-p_1)^2}\\
+&<0
+\end{aligned}
+$$
+
+Since $0 < \sum_{j=1}^{N_1}W_{1j} < 38N_1$, $N_1 >0$, and $0 < p_1 < 1$, this term will always be $< 0$ so the MLEs found above are maximums. 
+
+### GLM model 
+
+Since the canonical link for the binomial distribution is the logit link, the GLM model is as follows:
+
+$$
+\begin{aligned}
+\text{logit}(p_i) &= \beta_0 + \beta_1\text{Year}_{ij} 
+\end{aligned}
+$$
+
+```{r}
+# Fit the binomial model
+binomial.model <- glm(cbind(diabetes_vig_score, 38-diabetes_vig_score)~year, 
+                      data=mydata, family=binomial())
+
+summary(binomial.model)
+
+# Get estimates for p1 and p2
+expit <- function(x){plogis(x)}
+expit(-0.526792-0.363188)
+expit(-0.526792)
+
+# Compare the GLM estimates against the calculated estimates from prev. part
+yr1 <- mydata[mydata$year!="2014-2015",]
+N1 <- nrow(yr1)
+W1j <- sum(yr1$diabetes_vig_score)
+W1j/(38*N1)
+
+yr2 <- mydata[mydata$year=="2014-2015",]
+N2 <- nrow(yr2)
+W2j <- sum(yr2$diabetes_vig_score)
+W2j/(38*N2)
+```
+From the binomial model results, I get $\hat{p_1}=0.37$ and $\hat{p_2}=0.29$, assuming that $p_1=\text{2007}$ and $p_2=\text{2014-2015}$. I also chose to calculate the MLE estimates manually using the formula I obtained in the previous part and got the exact same values for both $p_1$ and $p_2$. The direction of the coefficient agrees with the two previous models and is statistically significant, indicating that diabetes knowledge has changed over time. The interpretation of this model is quite different than the previous two models as we are dealing with odds ratios now rather than the log link or linear link. Exp(-0.363)=0.70 implies that the odds of having a higher probability $(p_1)$ to get an essential care item (and therefore a higher diabetes vignette score count) is lower among the 2014-2015 group compared to the 2007 group. 
+
+## Part C.ii
+
+### Write out the likelihood for the total diabetes vignette scores
+
+Assumption: The k care items are independent from one another
+
+$$
+\begin{aligned}
+L(p_1,p_2|W)&=\prod_{i=1}^2 \prod_{j=1}^{N_i} p_{ij}^{W_{ij}}(1-p_{ij})^{38-W_{ij}}\\
+&=\prod_{j=1}^{N_1} p_{1j}^{W_{1j}}(1-p_{1j})^{38-W_{1j}} \prod_{j=1}^{N_2} p_{2j}^{W_{2j}}(1-p_{2j})^{38-W_{2j}}\\
+\ell(p_1,p_2|W)&=\sum_{j=1}^{N_1} \left[W_{1j}log(p_{1j}) + (38-W_{1j})log(1-p_{1j})\right] +\\
+&\quad \sum_{j=1}^{N_2} \left[W_{2j}log(p_{2j}) + (38-W_{2j})log(1-p_{2j})\right]
+\end{aligned}
+$$
+
+### Is there a closed form solution?
+
+No, there is not a closed form solution. Similar to matched case-control studies, the number of parameters increases with the sample size since every observation has a different $p_{ij}$ probability. In addition to not giving a closed form, this leads to poor behaved asymptotics as it violates assumed regularity conditions. Some potential solutions to this could be marginalizing out these nuisance parameters or conditioning on them.
+
+\newpage
+### Fitting the model
+
+```{r}
+binomial.model.2 <- glm(cbind(diabetes_vig_score, 38-diabetes_vig_score)~ 
+            provider_cadre + year + province_id + urban + experience_yrs + 
+            training_ncd + training_diabetes + training_drugs + facility_type, 
+            data=mydata, family=binomial())
+summary(binomial.model.2)
+```
+
+Comparing these results to results to the linear model and poisson model, the directions of all the coefficients are still the same. The significance of all the coefficients remained mostly the same as well - especially the main variable of interest, year. Similar to the previous part, we are dealing with odds ratios when we exponentiate our coefficients here; however, interpretation is more difficult as each observation has a different probability of success now compared to the two probabilities that we had before. For example, for our main variable of interest years, the odds of scoring higher on the diabetes vignette is exp(-0.317)=0.728 times lower for those in the 2014-2015 wave compared to the 2007 wave, holding all other variables constant. This difference remains highly statistically significant (p<0.001). Having training in NCD and diabetes also significantly increases the odds of scoring higher (p<0.001 for both), while training in drugs does not have as much of an effect (p=0.310). The type of provider cadre also significantly affected the odds of scoring higher, with doctors scoring the highest and then paramedics, nurses, and lastly midwifes. Public and urban facilities also perform slightly better than their counterparts as well. Overall, all of these results agree with the Stein 2020 paper's conclusions.
+
+
